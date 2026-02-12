@@ -1,69 +1,127 @@
 <div class="websearch_settings">
-    <div class="inline-drawer">
-        <div class="inline-drawer-toggle inline-drawer-header">
-            <b>Web Search</b>
-            <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down"></div>
-        </div>
-        <div class="inline-drawer-content">
-            <div class="flex-container flexFlowColumn">
-                <label class="checkbox_label" for="websearch_enabled">
-                    <input type="checkbox" id="websearch_enabled" />
-                    <span>Enabled</span>
-                </label>
-                <h4>Source</h4>
-                <div id="websearch_serper_settings">
-                    <div class="flex-container alignItemsBaseline">
-                        <h4 class="flex1 margin0">
-                            <a href="https://serper.dev/">Serper Key</a>
-                        </h4>
-                        <div id="serper_key" class="menu_button menu_button_icon">
-                            <i class="fa-solid fa-key"></i>
-                            <span>Click to set</span>
-                        </div>
-                    </div>
-                </div>
-                <label for="websearch_cache_lifetime">Cache Lifetime <small>(seconds)</small></label>
-                <input type="number" class="text_pole" id="websearch_cache_lifetime" value="">
-                <hr>
-                <h4>Prompt Settings</h4>
-                <label for="websearch_budget">Prompt Budget <small>(text characters)</small></label>
-                <input type="number" class="text_pole" id="websearch_budget" value="">
-                <label for="websearch_template">Injection Template</label>
-                <textarea id="websearch_template" class="text_pole textarea_compact autoSetHeight" rows="2" placeholder="Use {{query}} and {{text}} macro."></textarea>
-                <hr>
-                <h4>Page Scraping</h4>
-                <label class="checkbox_label" for="websearch_visit_enabled">
-                    <input type="checkbox" id="websearch_visit_enabled" />
-                    <span>Visit Links</span>
-                </label>
-                <label class="checkbox_label" for="websearch_include_images">
-                    <input type="checkbox" id="websearch_include_images" />
-                    <span>Include Images</span>
-                </label>
-                <div class="marginTopBot5">
-                    Text will be extracted from the visited search result pages and saved to:
-                </div>
-                <label for="websearch_visit_target_none" class="checkbox_label">
-                    <input id="websearch_visit_target_none" type="radio" name="websearch_visit_target" value="2" />
-                    <span>None (just images)</span>
-                </label>
-                <label for="websearch_visit_target_message" class="checkbox_label">
-                    <input id="websearch_visit_target_message" type="radio" name="websearch_visit_target" value="0" />
-                    <span>Message attachment</span>
-                </label>
-                <label for="websearch_visit_target_databank" class="checkbox_label">
-                    <input id="websearch_visit_target_databank" type="radio" name="websearch_visit_target" value="1" />
-                    <span>Data Bank (chat)</span>
-                </label>
-                <label for="websearch_visit_count">Visit Count <small>(max per query)</small></label>
-                <input type="number" class="text_pole" id="websearch_visit_count" value="" min="0" max="10" step="1">
-                <label for="websearch_visit_blacklist">Visit Domain Blacklist <small>(one per line)</small></label>
-                <textarea id="websearch_visit_blacklist" class="text_pole textarea_compact" rows="4"></textarea>
-                <label for="websearch_file_header">File Header</label>
-                <textarea id="websearch_file_header" class="text_pole textarea_compact autoSetHeight" rows="2" placeholder="Use {{query}} macro."></textarea>
-                <label for="websearch_block_header">Block Header</label>
-                <textarea id="websearch_block_header" class="text_pole textarea_compact autoSetHeight" rows="2" placeholder="Use {{link}} and {{text}} macros."></textarea>
-            </div>
-        </div>
+  <div class="inline-drawer">
+    <div class="inline-drawer-toggle inline-drawer-header">
+      <b>Web Search</b>
+      <div
+        class="inline-drawer-icon fa-solid fa-circle-chevron-down down"
+      ></div>
     </div>
+    <div class="inline-drawer-content">
+      <div class="flex-container flexFlowColumn">
+        <label class="checkbox_label" for="websearch_enabled">
+          <input type="checkbox" id="websearch_enabled" />
+          <span>Enabled</span>
+        </label>
+        <h4>Source</h4>
+        <div id="websearch_serper_settings">
+          <div class="flex-container alignItemsBaseline">
+            <h4 class="flex1 margin0">
+              <a href="https://serper.dev/">Serper Key</a>
+            </h4>
+            <div id="serper_key" class="menu_button menu_button_icon">
+              <i class="fa-solid fa-key"></i>
+              <span>Click to set</span>
+            </div>
+          </div>
+        </div>
+        <label for="websearch_cache_lifetime"
+          >Cache Lifetime <small>(seconds)</small></label
+        >
+        <input
+          type="number"
+          class="text_pole"
+          id="websearch_cache_lifetime"
+          value=""
+        />
+        <hr />
+        <h4>Prompt Settings</h4>
+        <label for="websearch_budget"
+          >Prompt Budget <small>(text characters)</small></label
+        >
+        <input type="number" class="text_pole" id="websearch_budget" value="" />
+        <label for="websearch_template">Injection Template</label>
+        <textarea
+          id="websearch_template"
+          class="text_pole textarea_compact autoSetHeight"
+          rows="2"
+          placeholder="Use {{query}} and {{text}} macro."
+        ></textarea>
+        <hr />
+        <h4>Page Scraping</h4>
+        <label class="checkbox_label" for="websearch_visit_enabled">
+          <input type="checkbox" id="websearch_visit_enabled" />
+          <span>Visit Links</span>
+        </label>
+        <label class="checkbox_label" for="websearch_include_images">
+          <input type="checkbox" id="websearch_include_images" />
+          <span>Include Images</span>
+        </label>
+        <div class="marginTopBot5">
+          Text will be extracted from the visited search result pages and saved
+          to:
+        </div>
+        <label for="websearch_visit_target_none" class="checkbox_label">
+          <input
+            id="websearch_visit_target_none"
+            type="radio"
+            name="websearch_visit_target"
+            value="2"
+          />
+          <span>None (just images)</span>
+        </label>
+        <label for="websearch_visit_target_message" class="checkbox_label">
+          <input
+            id="websearch_visit_target_message"
+            type="radio"
+            name="websearch_visit_target"
+            value="0"
+          />
+          <span>Message attachment</span>
+        </label>
+        <label for="websearch_visit_target_databank" class="checkbox_label">
+          <input
+            id="websearch_visit_target_databank"
+            type="radio"
+            name="websearch_visit_target"
+            value="1"
+          />
+          <span>Data Bank (chat)</span>
+        </label>
+        <label for="websearch_visit_count"
+          >Visit Count <small>(max per query)</small></label
+        >
+        <input
+          type="number"
+          class="text_pole"
+          id="websearch_visit_count"
+          value=""
+          min="0"
+          max="10"
+          step="1"
+        />
+        <label for="websearch_visit_blacklist"
+          >Visit Domain Blacklist <small>(one per line)</small></label
+        >
+        <textarea
+          id="websearch_visit_blacklist"
+          class="text_pole textarea_compact"
+          rows="4"
+        ></textarea>
+        <label for="websearch_file_header">File Header</label>
+        <textarea
+          id="websearch_file_header"
+          class="text_pole textarea_compact autoSetHeight"
+          rows="2"
+          placeholder="Use {{query}} macro."
+        ></textarea>
+        <label for="websearch_block_header">Block Header</label>
+        <textarea
+          id="websearch_block_header"
+          class="text_pole textarea_compact autoSetHeight"
+          rows="2"
+          placeholder="Use {{link}} and {{text}} macros."
+        ></textarea>
+      </div>
+    </div>
+  </div>
 </div>
