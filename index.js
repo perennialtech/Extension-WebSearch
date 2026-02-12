@@ -1,33 +1,20 @@
-import { appendMediaToMessage, extension_prompt_types, getRequestHeaders, saveSettingsDebounced, setExtensionPrompt, substituteParamsExtended, name2 } from '../../../../script.js';
+import { appendMediaToMessage, extension_prompt_types, getRequestHeaders, saveSettingsDebounced, substituteParamsExtended, name2 } from '../../../../script.js';
 import { appendFileContent, uploadFileAttachment } from '../../../chats.js';
-import { doExtrasFetch, extension_settings, getApiUrl, getContext, modules, renderExtensionTemplateAsync } from '../../../extensions.js';
+import { extension_settings, getContext, renderExtensionTemplateAsync } from '../../../extensions.js';
 import { registerDebugFunction } from '../../../power-user.js';
 import { SECRET_KEYS, secret_state, writeSecret } from '../../../secrets.js';
 import { POPUP_RESULT, POPUP_TYPE, callGenericPopup } from '../../../popup.js';
-import { extractTextFromHTML, isFalseBoolean, isTrueBoolean, onlyUnique, trimToEndSentence, trimToStartSentence, getStringHash, regexFromString, isDataURL, bufferToBase64, saveBase64AsFile } from '../../../utils.js';
+import { extractTextFromHTML, isFalseBoolean, isTrueBoolean, onlyUnique, trimToEndSentence, trimToStartSentence, getStringHash, isDataURL, bufferToBase64, saveBase64AsFile } from '../../../utils.js';
 import { SlashCommandParser } from '../../../slash-commands/SlashCommandParser.js';
 import { SlashCommand } from '../../../slash-commands/SlashCommand.js';
 import { ARGUMENT_TYPE, SlashCommandArgument, SlashCommandNamedArgument } from '../../../slash-commands/SlashCommandArgument.js';
 import { commonEnumProviders } from '../../../slash-commands/SlashCommandCommonEnumsProvider.js';
 import { localforage } from '../../../../lib.js';
-import { textgen_types, textgenerationwebui_settings } from '../../../textgen-settings.js';
 
 const { ensureMessageMediaIsArray } = SillyTavern.getContext();
 const supportsMediaArrays = typeof ensureMessageMediaIsArray === 'function';
 
 const storage = localforage.createInstance({ name: 'SillyTavern_WebSearch' });
-const extensionPromptMarker = '___WebSearch___';
-
-const WEBSEARCH_SOURCES = {
-    SERPAPI: 'serpapi',
-    EXTRAS: 'extras',
-    PLUGIN: 'plugin',
-    SEARXNG: 'searxng',
-    TAVILY: 'tavily',
-    KOBOLDCPP: 'koboldcpp',
-    SERPER: 'serper',
-    ZAI: 'zai',
-};
 
 const VISIT_TARGETS = {
     MESSAGE: 0,
@@ -35,75 +22,10 @@ const VISIT_TARGETS = {
     NONE: 2,
 };
 
-/**
- * @typedef {Object} RegexRule
- * @property {string} pattern Regular expression pattern
- * @property {string} query Web search query
- */
-
 const defaultSettings = {
-    triggerPhrases: [
-        'search for',
-        'look up',
-        'find me',
-        'tell me',
-        'explain me',
-        'can you',
-        'how to',
-        'how is',
-        'how do you',
-        'ways to',
-        'who is',
-        'who are',
-        'who was',
-        'who were',
-        'who did',
-        'what is',
-        'what\'s',
-        'what are',
-        'what\'re',
-        'what was',
-        'what were',
-        'what did',
-        'what do',
-        'where are',
-        'where\'re',
-        'where\'s',
-        'where is',
-        'where was',
-        'where were',
-        'where did',
-        'where do',
-        'where does',
-        'where can',
-        'how do i',
-        'where do i',
-        'how much',
-        'definition of',
-        'what happened',
-        'why does',
-        'why do',
-        'why did',
-        'why is',
-        'why are',
-        'why were',
-        'when does',
-        'when do',
-        'when did',
-        'when is',
-        'when was',
-        'when were',
-        'how does',
-        'meaning of',
-    ],
     insertionTemplate: '***\nRelevant information from the web ({{query}}):\n{{text}}\n***',
     cacheLifetime: 60 * 60 * 24 * 7, // 1 week
-    position: extension_prompt_types.IN_PROMPT,
-    depth: 2,
-    maxWords: 10,
     budget: 2000,
-    source: WEBSEARCH_SOURCES.SERPAPI,
-    extras_engine: 'google',
     visit_enabled: false,
     visit_target: VISIT_TARGETS.MESSAGE,
     visit_count: 3,
@@ -115,13 +37,7 @@ const defaultSettings = {
         'facebook.com',
         'instagram.com',
     ],
-    use_backticks: true,
-    use_trigger_phrases: true,
-    use_regex: false,
-    use_function_tool: false,
-    regex: [],
-    searxng_url: '',
-    searxng_preferences: '',
+    use_function_tool: true,
     include_images: false,
 };
 
@@ -134,77 +50,9 @@ function ensureEndNewline(text) {
     return text.endsWith('\n') ? text : text + '\n';
 }
 
-function createRegexRule() {
-    const rule = { pattern: '', query: '' };
-    extension_settings.websearch.regex.push(rule);
-    saveSettingsDebounced();
-    renderRegexRules();
-}
-
-async function renderRegexRules() {
-    $('#websearch_regex_list').empty();
-    for (const rule of extension_settings.websearch.regex) {
-        const template = $(await renderExtensionTemplateAsync('third-party/Extension-WebSearch', 'regex'));
-        template.find('.websearch_regex_pattern').val(rule.pattern).on('input', function () {
-            rule.pattern = String($(this).val());
-            saveSettingsDebounced();
-        });
-        template.find('.websearch_regex_query').val(rule.query).on('input', function () {
-            rule.query = String($(this).val());
-            saveSettingsDebounced();
-        });
-        template.find('.websearch_regex_delete').on('click', () => {
-            if (!confirm('Are you sure?')) {
-                return;
-            }
-
-            const index = extension_settings.websearch.regex.indexOf(rule);
-            extension_settings.websearch.regex.splice(index, 1);
-            saveSettingsDebounced();
-            renderRegexRules();
-        });
-        $('#websearch_regex_list').append(template);
-    }
-}
-
 async function isSearchAvailable() {
-    if (extension_settings.websearch.source === WEBSEARCH_SOURCES.SERPAPI && !secret_state[SECRET_KEYS.SERPAPI]) {
-        console.debug('WebSearch: no SerpApi key found');
-        return false;
-    }
-
-    if (extension_settings.websearch.source === WEBSEARCH_SOURCES.EXTRAS && !modules.includes('websearch')) {
-        console.debug('WebSearch: no websearch Extras module');
-        return false;
-    }
-
-    if (extension_settings.websearch.source === WEBSEARCH_SOURCES.PLUGIN && !(await probeSeleniumSearchPlugin())) {
-        console.debug('WebSearch: no websearch server plugin');
-        return false;
-    }
-
-    if (extension_settings.websearch.source === WEBSEARCH_SOURCES.SEARXNG && !extension_settings.websearch.searxng_url) {
-        console.debug('WebSearch: no SearXNG URL');
-        return false;
-    }
-
-    if (extension_settings.websearch.source === WEBSEARCH_SOURCES.TAVILY && !secret_state[SECRET_KEYS.TAVILY]) {
-        console.debug('WebSearch: no Tavily key found');
-        return false;
-    }
-
-    if (extension_settings.websearch.source === WEBSEARCH_SOURCES.SERPER && !secret_state[SECRET_KEYS.SERPER]) {
+    if (!secret_state[SECRET_KEYS.SERPER]) {
         console.debug('WebSearch: no Serper key found');
-        return false;
-    }
-
-    if (extension_settings.websearch.source === WEBSEARCH_SOURCES.ZAI && !secret_state[SECRET_KEYS.ZAI]) {
-        console.debug('WebSearch: no Z.AI key found');
-        return false;
-    }
-
-    if (extension_settings.websearch.source === WEBSEARCH_SOURCES.KOBOLDCPP && !textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP]) {
-        console.debug('WebSearch: no KoboldCpp server URL');
         return false;
     }
 
@@ -223,238 +71,6 @@ function canUseFunctionTool() {
     }
 
     return isToolCallingSupported();
-}
-
-async function onWebSearchPrompt(chat, _maxContext, _abort, type) {
-    if (type === 'quiet') {
-        console.debug('WebSearch: quiet prompt, ignoring');
-        return;
-    }
-
-    if (!extension_settings.websearch.enabled) {
-        console.debug('WebSearch: extension is disabled');
-        return;
-    }
-
-    if (extension_settings.websearch.use_function_tool && canUseFunctionTool()) {
-        console.debug('WebSearch: using the function tool');
-        return;
-    }
-
-    if (!chat || !Array.isArray(chat) || chat.length === 0) {
-        console.debug('WebSearch: chat is empty');
-        return;
-    }
-
-    const startTime = Date.now();
-
-    try {
-        console.debug('WebSearch: resetting the extension prompt');
-        setExtensionPrompt(extensionPromptMarker, '', extension_settings.websearch.position, extension_settings.websearch.depth);
-
-        const isAvailable = await isSearchAvailable();
-
-        if (!isAvailable) {
-            return;
-        }
-
-        // Find the latest user message
-        let searchQuery = '';
-        let triggerMessage = null;
-
-        for (const message of chat.slice().reverse()) {
-            if (message.is_system) {
-                continue;
-            }
-
-            if (message.mes && message.is_user) {
-                if (isBreakCondition(message.mes)) {
-                    break;
-                }
-
-                const query = extractSearchQuery(message.mes);
-
-                if (!query) {
-                    continue;
-                }
-
-                searchQuery = query;
-                triggerMessage = message;
-                break;
-            }
-        }
-
-        if (!searchQuery) {
-            console.debug('WebSearch: no user message found');
-            return;
-        }
-
-        const { text, links, images } = await performSearchRequest(searchQuery, { useCache: true });
-
-        if (!text) {
-            console.debug('WebSearch: search failed');
-            return;
-        }
-
-        const hasVisitTargets = (Array.isArray(links) && links.length > 0) || (Array.isArray(images) && images.length > 0);
-        if (extension_settings.websearch.visit_enabled && triggerMessage && hasVisitTargets) {
-            const messageId = Number(triggerMessage.index);
-            const visitResult = await visitLinksAndAttachToMessage(searchQuery, links, images, messageId);
-
-            if (visitResult && visitResult.file) {
-                if (!triggerMessage.extra) {
-                    triggerMessage.extra = {};
-                }
-                if (supportsMediaArrays) {
-                    if (!Array.isArray(triggerMessage.extra.files)) {
-                        triggerMessage.extra.files = [];
-                    }
-                    if (!triggerMessage.extra.files.includes(visitResult.file)) {
-                        triggerMessage.extra.files.push(visitResult.file);
-                    }
-                } else {
-                    triggerMessage.extra.file = visitResult.file;
-                }
-                triggerMessage.mes = await appendFileContent(triggerMessage, triggerMessage.mes);
-            }
-        }
-
-        // Insert the result into the prompt
-        let template = extension_settings.websearch.insertionTemplate;
-
-        if (!template) {
-            console.debug('WebSearch: no insertion template found, using default');
-            template = defaultSettings.insertionTemplate;
-        }
-
-        if (!(/{{text}}/i.test(template))) {
-            console.debug('WebSearch: insertion template does not contain {{text}} macro, appending');
-            template += '\n{{text}}';
-        }
-
-        const extensionPrompt = substituteParamsExtended(template, { text: text, query: searchQuery });
-        setExtensionPrompt(extensionPromptMarker, extensionPrompt, extension_settings.websearch.position, extension_settings.websearch.depth);
-        console.log('WebSearch: prompt updated', extensionPrompt);
-    } catch (error) {
-        console.error('WebSearch: error while processing the request', error);
-    } finally {
-        console.log('WebSearch: finished in', Date.now() - startTime, 'ms');
-    }
-}
-
-function isBreakCondition(message) {
-    if (message && message.trim().startsWith('!')) {
-        console.debug('WebSearch: message starts with an exclamation mark, stopping');
-        return true;
-    }
-
-    return false;
-}
-
-/**
- * Extracts the search query from the message.
- * @param {string} message Message to extract the search query from
- * @returns {string} Search query
- */
-function extractSearchQuery(message) {
-    if (message && message.trim().startsWith('.')) {
-        console.debug('WebSearch: message starts with a dot, ignoring');
-        return;
-    }
-
-    message = processInputText(message);
-
-    if (!message) {
-        console.debug('WebSearch: processed message is empty');
-        return;
-    }
-
-    console.log('WebSearch: processed message', message);
-
-    if (extension_settings.websearch.use_backticks) {
-        // Remove triple backtick blocks
-        message = message.replace(/```[^`]+```/gi, '');
-        // Find the first backtick-enclosed substring
-        const match = message.match(/`([^`]+)`/i);
-
-        if (match) {
-            const query = match[1].trim();
-            console.debug('WebSearch: backtick-enclosed substring found', query);
-            return query;
-        }
-    }
-
-    if (extension_settings.websearch.use_regex) {
-        for (const rule of extension_settings.websearch.regex) {
-            const regex = regexFromString(rule.pattern);
-
-            if (regex && regex.test(message)) {
-                const groups = message.match(regex);
-                const query = substituteParamsExtended(rule.query).replace(/\$(\d+)/g, (_, i) => groups[i] || '');
-                console.debug('WebSearch: regex rule matched', rule.pattern, query);
-                return query;
-            }
-        }
-    }
-
-    if (extension_settings.websearch.use_trigger_phrases) {
-        // Find the first index of the trigger phrase in the message
-        let triggerPhraseIndex = -1;
-        let triggerPhraseActual = '';
-        const triggerPhrases = extension_settings.websearch.triggerPhrases;
-
-        for (let i = 0; i < triggerPhrases.length; i++) {
-            const triggerPhrase = triggerPhrases[i].toLowerCase();
-            const indexOf = message.indexOf(triggerPhrase);
-
-            if (indexOf !== -1) {
-                console.debug(`WebSearch: trigger phrase found "${triggerPhrase}" at index ${indexOf}`);
-                triggerPhraseIndex = indexOf;
-                triggerPhraseActual = triggerPhrase;
-                break;
-            }
-        }
-
-        if (triggerPhraseIndex === -1) {
-            console.debug('WebSearch: no trigger phrase found');
-            return;
-        }
-
-        // Extract the relevant part of the message (after the trigger phrase)
-        message = message.substring(triggerPhraseIndex + triggerPhraseActual.length).trim();
-        console.log('WebSearch: extracted query', message);
-
-        // Limit the number of words
-        const maxWords = extension_settings.websearch.maxWords;
-        message = message.split(' ').slice(0, maxWords).join(' ');
-        console.log('WebSearch: query after word limit', message);
-
-        return message;
-    }
-}
-
-/**
- * Pre-process search query input text.
- * @param {string} text Input text
- * @returns {string} Processed text
- */
-function processInputText(text) {
-    // Convert to lowercase
-    text = text.toLowerCase();
-    // Remove punctuation
-    text = text.replace(/[\\.,@#!?$%&;:{}=_~[\]]/g, '');
-    // Remove double quotes (including region-specific ones)
-    text = text.replace(/["“”]/g, '');
-    // Remove carriage returns
-    text = text.replace(/\r/g, '');
-    // Replace newlines with spaces
-    text = text.replace(/[\n]+/g, ' ');
-    // Collapse multiple spaces into one
-    text = text.replace(/\s+/g, ' ');
-    // Trim
-    text = text.trim();
-
-    return text;
 }
 
 /**
@@ -525,6 +141,79 @@ async function visitLinks(query, links) {
     const fileHeader = ensureEndNewline(substituteParamsExtended(extension_settings.websearch.visit_file_header, { query: query }));
     const fileText = fileHeader + linkResult;
     return fileText;
+}
+
+/**
+ * Visit the provided image links and attach the resulting files to the chat.
+ * @param {string[]} images Array of image URLs
+ * @returns {Promise<string[]>} Resulting image URLs
+ */
+async function visitImages(images) {
+    if (!Array.isArray(images) || images.length === 0) {
+        console.debug('WebSearch: no images to visit');
+        return [];
+    }
+
+    const imageSwipes = [];
+    const visitPromises = [];
+    const visitCount = extension_settings.websearch.visit_count;
+
+    for (let i = 0; i < Math.min(visitCount, images.length); i++) {
+        const image = images[i];
+        visitPromises.push(visitImage(image));
+    }
+
+    const visitResult = await Promise.allSettled(visitPromises);
+
+    for (const result of visitResult) {
+        if (result.status === 'fulfilled' && result.value) {
+            const image = result.value;
+            if (image) {
+                imageSwipes.push(image);
+            }
+        }
+    }
+
+    return imageSwipes;
+}
+
+/**
+ * Checks if the file for the search query already exists in the Data Bank.
+ * @param {string} query Search query
+ * @returns {Promise<boolean>} Whether the file exists
+ */
+async function isFileExistsInDataBank(query) {
+    try {
+        const { getDataBankAttachmentsForSource } = await import('../../../chats.js');
+        const attachments = await getDataBankAttachmentsForSource('chat');
+        const existingAttachment = attachments.find(x => x.name.startsWith(`websearch - ${query} - `));
+        if (existingAttachment) {
+            console.debug('WebSearch: file for such query already exists in the Data Bank');
+            return true;
+        }
+        return false;
+    } catch (error) {
+        // Prevent visiting links if the Data Bank is not available
+        toastr.error('Data Bank module is not available');
+        console.error('WebSearch: failed to check if the file exists in the Data Bank', error);
+        return true;
+    }
+}
+
+/**
+ * Uploads the file to the Data Bank.
+ * @param {string} fileName File name
+ * @param {string} fileText File text
+ * @returns {Promise<void>}
+ */
+async function uploadToDataBank(fileName, fileText) {
+    try {
+        const { uploadFileAttachmentToServer } = await import('../../../chats.js');
+        const file = new File([fileText], fileName, { type: 'text/plain' });
+        await uploadFileAttachmentToServer(file, 'chat');
+    } catch (error) {
+        console.error('WebSearch: failed to import the chat module', error);
+    }
 }
 
 /**
@@ -663,79 +352,6 @@ async function visitLinksAndAttachToMessage(query, links, images, messageId) {
 }
 
 /**
- * Visit the provided image links and attach the resulting files to the chat.
- * @param {string[]} images Array of image URLs
- * @returns {Promise<string[]>} Resulting image URLs
- */
-async function visitImages(images) {
-    if (!Array.isArray(images) || images.length === 0) {
-        console.debug('WebSearch: no images to visit');
-        return [];
-    }
-
-    const imageSwipes = [];
-    const visitPromises = [];
-    const visitCount = extension_settings.websearch.visit_count;
-
-    for (let i = 0; i < Math.min(visitCount, images.length); i++) {
-        const image = images[i];
-        visitPromises.push(visitImage(image));
-    }
-
-    const visitResult = await Promise.allSettled(visitPromises);
-
-    for (const result of visitResult) {
-        if (result.status === 'fulfilled' && result.value) {
-            const image = result.value;
-            if (image) {
-                imageSwipes.push(image);
-            }
-        }
-    }
-
-    return imageSwipes;
-}
-
-/**
- * Checks if the file for the search query already exists in the Data Bank.
- * @param {string} query Search query
- * @returns {Promise<boolean>} Whether the file exists
- */
-async function isFileExistsInDataBank(query) {
-    try {
-        const { getDataBankAttachmentsForSource } = await import('../../../chats.js');
-        const attachments = await getDataBankAttachmentsForSource('chat');
-        const existingAttachment = attachments.find(x => x.name.startsWith(`websearch - ${query} - `));
-        if (existingAttachment) {
-            console.debug('WebSearch: file for such query already exists in the Data Bank');
-            return true;
-        }
-        return false;
-    } catch (error) {
-        // Prevent visiting links if the Data Bank is not available
-        toastr.error('Data Bank module is not available');
-        console.error('WebSearch: failed to check if the file exists in the Data Bank', error);
-        return true;
-    }
-}
-
-/**
- * Uploads the file to the Data Bank.
- * @param {string} fileName File name
- * @param {string} fileText File text
- * @returns {Promise<void>}
- */
-async function uploadToDataBank(fileName, fileText) {
-    try {
-        const { uploadFileAttachmentToServer } = await import('../../../chats.js');
-        const file = new File([fileText], fileName, { type: 'text/plain' });
-        await uploadFileAttachmentToServer(file, 'chat');
-    } catch (error) {
-        console.error('WebSearch: failed to import the chat module', error);
-    }
-}
-
-/**
  * Visits the provided web link and extracts the text from the resulting HTML.
  * @param {string} link Web link to visit
  * @returns {Promise<{link: string, text:string}>} Extracted text
@@ -815,256 +431,6 @@ async function visitImage(url) {
 }
 
 /**
- * Performs a search query via SerpApi.
- * @param {string} query Search query
- * @returns {Promise<{textBits: string[], links: string[], images: string[]}>} Lines of search results.
- */
-async function doSerpApiQuery(query) {
-    // Perform the search
-    const result = await fetch('/api/search/serpapi', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ query }),
-    });
-
-    if (!result.ok) {
-        const text = await result.text();
-        console.debug('WebSearch: search request failed', result.statusText, text);
-        return;
-    }
-
-    const data = await result.json();
-    console.debug('WebSearch: search response', data);
-
-    // Extract the relevant information
-    // Order: 1. Answer Box, 2. Knowledge Graph, 3. Organic Results (max 5), 4. Related Questions (max 5)
-    const textBits = [];
-    const links = [];
-    const images = [];
-
-    if (Array.isArray(data.organic_results)) {
-        links.push(...data.organic_results.map(x => x.link).filter(x => x));
-    }
-
-    if (Array.isArray(data.inline_images)) {
-        for (const image of data.inline_images) {
-            images.push(image.original || image.thumbnail);
-        }
-    }
-
-    if (data.answer_box) {
-        switch (data.answer_box.type) {
-            case 'organic_result':
-                textBits.push(data.answer_box.snippet || data.answer_box.result || data.answer_box.title);
-
-                if (data.answer_box.list) {
-                    textBits.push(data.answer_box.list.join('\n'));
-                }
-
-                if (data.answer_box.table) {
-                    textBits.push(data.answer_box.table.join('\n'));
-                }
-
-                break;
-            case 'translation_result':
-                textBits.push(data.answer_box.translation?.target?.text);
-                break;
-            case 'calculator_result':
-                textBits.push(`Answer: ${data.answer_box.result}`);
-                break;
-            case 'population_result':
-                textBits.push(`${data.answer_box.place} ${data.answer_box.population}`);
-                break;
-            case 'currency_converter':
-                textBits.push(data.answer_box.result);
-                break;
-            case 'finance_results':
-                textBits.push(`${data.answer_box.title} ${data.answer_box.exchange} ${data.answer_box.stock} ${data.answer_box.price} ${data.answer_box.currency}`);
-                break;
-            case 'weather_result':
-                textBits.push(`${data.answer_box.location}; ${data.answer_box.weather}; ${data.answer_box.temperature} ${data.answer_box.unit}`);
-                break;
-            case 'flight_duration':
-                textBits.push(data.answer_box.duration);
-                break;
-            case 'dictionary_results':
-                textBits.push(data.answer_box.definitions?.join('\n'));
-                break;
-            case 'time':
-                textBits.push(`${data.answer_box.result} ${data.answer_box.date}`);
-                break;
-            default:
-                textBits.push(data.answer_box.result || data.answer_box.answer || data.answer_box.title);
-                break;
-        }
-    }
-
-    if (data.knowledge_graph) {
-        textBits.push(data.knowledge_graph.description || data.knowledge_graph.snippet || data.knowledge_graph.merchant_description || data.knowledge_graph.title);
-    }
-
-    const MAX_RESULTS = 10;
-
-    for (let i = 0; i < MAX_RESULTS; i++) {
-        if (Array.isArray(data.organic_results)) {
-            const result = data.organic_results[i];
-            if (result) {
-                textBits.push(result.snippet);
-            }
-        }
-
-        if (Array.isArray(data.related_questions)) {
-            const result = data.related_questions[i];
-            if (result) {
-                textBits.push(`${result.question} ${result.snippet}`);
-            }
-        }
-    }
-
-    return { textBits, links, images };
-}
-
-/**
- * Performs a search query via Extras API.
- * @param {string} query Search query
- * @returns {Promise<{textBits: string[], links: string[], images: string[]}>} Lines of search results.
- */
-async function doExtrasApiQuery(query) {
-    const url = new URL(getApiUrl());
-    url.pathname = '/api/websearch';
-    const result = await doExtrasFetch(url, {
-        method: 'POST',
-        headers: {
-            'Content-Type': 'application/json',
-            'Bypass-Tunnel-Reminder': 'bypass',
-        },
-        body: JSON.stringify({
-            query: query,
-            engine: extension_settings.websearch.extras_engine,
-        }),
-    });
-
-    if (!result.ok) {
-        const text = await result.text();
-        console.debug('WebSearch: search request failed', result.statusText, text);
-        return;
-    }
-
-    const data = await result.json();
-    console.debug('WebSearch: search response', data);
-
-    const textBits = data.results.split('\n');
-    const links = Array.isArray(data.links) ? data.links : [];
-    const images = Array.isArray(data.images) ? data.images : [];
-    return { textBits, links, images };
-}
-
-/**
- * Performs a search query via the Selenium search plugin.
- * @param {string} query Search query
- * @returns {Promise<{textBits: string[], links: string[], images: string[]}>} Lines of search results.
- */
-async function doSeleniumPluginQuery(query) {
-    const result = await fetch('/api/plugins/selenium/search', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
-            query: query,
-            engine: extension_settings.websearch.extras_engine,
-            include_images: extension_settings.websearch.include_images,
-        }),
-    });
-
-    if (!result.ok) {
-        const text = await result.text();
-        console.debug('WebSearch: search request failed', result.statusText, text);
-        return;
-    }
-
-    const data = await result.json();
-    console.debug('WebSearch: search response', data);
-
-    const textBits = data.results.split('\n');
-    const links = Array.isArray(data.links) ? data.links : [];
-    const images = Array.isArray(data.images) ? data.images : [];
-    return { textBits, links, images };
-}
-
-/**
- * Performs a search query via Tavily.
- * @param {string} query Search query
- * @returns {Promise<{textBits: string[], links: string[], images: string[]}>} Lines of search results.
- */
-async function doTavilyQuery(query) {
-    const result = await fetch('/api/search/tavily', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({
-            query,
-            include_images: extension_settings.websearch.include_images,
-        }),
-    });
-
-    if (!result.ok) {
-        console.debug('WebSearch: search request failed', result.statusText);
-        return;
-    }
-
-    const textBits = [];
-    const links = [];
-    const images = [];
-    const data = await result.json();
-
-    if (data.answer) {
-        textBits.push(data.answer);
-    }
-
-    if (Array.isArray(data.results)) {
-        data.results.forEach(x => {
-            textBits.push(`${x.title}\n${x.content}`);
-            links.push(x.url);
-        });
-    }
-
-    if (Array.isArray(data.images)) {
-        images.push(...data.images);
-    }
-
-    return { textBits, links, images };
-}
-
-/**
- * Performs a search query via KoboldCpp.
- * @param {string} query Search query
- * @returns {Promise<{textBits: string[], links: string[], images: string[]}>} Lines of search results.
- */
-async function doKoboldCppQuery(query) {
-    const url = textgenerationwebui_settings.server_urls[textgen_types.KOBOLDCPP];
-    const result = await fetch('/api/search/koboldcpp', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ url, query }),
-    });
-
-    if (!result.ok) {
-        console.debug('WebSearch: search request failed', result.statusText);
-        return;
-    }
-
-    const textBits = [];
-    const links = [];
-    const images = [];
-    const data = await result.json();
-
-    for (const result of data) {
-        textBits.push([result.title, result.desc, result.content].filter(x => x).join('\n'));
-        links.push(result.url);
-    }
-
-    return { textBits, links, images };
-}
-
-/**
  * Performs a search query via Serper.
  * @param {string} query Search query
  * @returns {Promise<{textBits: string[], links: string[], images: string[]}>} Extracted text
@@ -1140,142 +506,6 @@ async function doSerperQuery(query) {
 }
 
 /**
- * Performs a search query via Z.AI.
- * @param {string} query Search query
- * @returns {Promise<{textBits: string[], links: string[], images: string[]}>} Extracted text
- */
-async function doZaiQuery(query) {
-    const textBits = [];
-    const links = [];
-    const images = [];
-
-    const result = await fetch('/api/search/zai', {
-        method: 'POST',
-        headers: getRequestHeaders(),
-        body: JSON.stringify({ query }),
-    });
-
-    if (!result.ok) {
-        console.debug('WebSearch: search request failed', result.statusText);
-        return;
-    }
-
-    const data = await result.json();
-
-    if (!Array.isArray(data?.search_result)) {
-        console.debug('WebSearch: invalid search results format');
-        return;
-    }
-
-    for (const item of data.search_result) {
-        links.push(item.link);
-        textBits.push(`${item.title}\n${item.content}`);
-    }
-
-    return { textBits, links, images };
-}
-
-/**
- * Performs a search query via SearXNG.
- * @param {string} query Search query
- * @returns {Promise<{textBits: string[], links: string[], images: string[]}>} Extracted text
- */
-async function doSearxngQuery(query) {
-    const textBits = [];
-    const links = [];
-    const images = [];
-
-    async function searchWeb() {
-        const result = await fetch('/api/search/searxng', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                query,
-                baseUrl: extension_settings.websearch.searxng_url,
-                preferences: extension_settings.websearch.searxng_preferences,
-            }),
-        });
-
-        if (!result.ok) {
-            console.debug('WebSearch: search request failed', result.statusText);
-            return;
-        }
-
-        const data = await result.text();
-        const doc = new DOMParser().parseFromString(data, 'text/html');
-        textBits.push(...Array.from(doc.querySelectorAll('#urls p.content')).map(x => x.textContent.trim()).filter(x => x));
-        links.push(...Array.from(doc.querySelectorAll('#urls .url_header, #urls .url_wrapper')).map(x => x.getAttribute('href')).filter(x => x));
-
-        if (doc.querySelector('.infobox')) {
-            const infoboxText = doc.querySelector('.infobox p')?.textContent?.trim();
-            const infoboxLink = doc.querySelector('.infobox a')?.getAttribute('href');
-
-            if (infoboxText) {
-                textBits.unshift(infoboxText);
-            }
-
-            if (infoboxLink) {
-                links.unshift(infoboxLink);
-            }
-        }
-    }
-
-    async function searchImages() {
-        if (!extension_settings.websearch.include_images) {
-            return;
-        }
-
-        const result = await fetch('/api/search/searxng', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-            body: JSON.stringify({
-                query,
-                baseUrl: extension_settings.websearch.searxng_url,
-                preferences: extension_settings.websearch.searxng_preferences,
-                categories: 'images',
-            }),
-        });
-
-        if (!result.ok) {
-            console.debug('WebSearch: search request failed', result.statusText);
-            return;
-        }
-
-
-        const data = await result.text();
-        const doc = new DOMParser().parseFromString(data, 'text/html');
-        images.push(...Array.from(doc.querySelectorAll('#urls .detail img')).map(x => x.getAttribute('data-src')).filter(x => x));
-    }
-
-    await Promise.allSettled([searchWeb(), searchImages()]);
-
-    return { textBits, links, images };
-}
-
-/**
- * Probes the Selenium search plugin to check if it's available.
- * @returns {Promise<boolean>} Whether the plugin is available
- */
-async function probeSeleniumSearchPlugin() {
-    try {
-        const result = await fetch('/api/plugins/selenium/probe', {
-            method: 'POST',
-            headers: getRequestHeaders(),
-        });
-
-        if (!result.ok) {
-            console.debug('WebSearch: plugin probe failed', result.statusText);
-            return false;
-        }
-
-        return true;
-    } catch (error) {
-        console.error('WebSearch: plugin probe failed', error);
-        return false;
-    }
-}
-
-/**
  *
  * @param {string} query Search query
  * @param {SearchRequestOptions} options Search request options
@@ -1300,38 +530,15 @@ async function performSearchRequest(query, options = { useCache: true }) {
         }
     }
 
-    /**
-     * @returns {Promise<{textBits: string[], links: string[], images: string[]}>}
-     */
-    async function callSearchSource() {
-        try {
-            switch (extension_settings.websearch.source) {
-                case WEBSEARCH_SOURCES.SERPAPI:
-                    return await doSerpApiQuery(query);
-                case WEBSEARCH_SOURCES.EXTRAS:
-                    return await doExtrasApiQuery(query);
-                case WEBSEARCH_SOURCES.PLUGIN:
-                    return await doSeleniumPluginQuery(query);
-                case WEBSEARCH_SOURCES.SEARXNG:
-                    return await doSearxngQuery(query);
-                case WEBSEARCH_SOURCES.TAVILY:
-                    return await doTavilyQuery(query);
-                case WEBSEARCH_SOURCES.KOBOLDCPP:
-                    return await doKoboldCppQuery(query);
-                case WEBSEARCH_SOURCES.SERPER:
-                    return await doSerperQuery(query);
-                case WEBSEARCH_SOURCES.ZAI:
-                    return await doZaiQuery(query);
-                default:
-                    throw new Error(`Unrecognized search source: ${extension_settings.websearch.source}`);
-            }
-        } catch (error) {
-            console.error('WebSearch: search failed', error);
-            return { textBits: [], links: [], images: [] };
-        }
+    let searchResult;
+    try {
+        searchResult = await doSerperQuery(query);
+    } catch (error) {
+        console.error('WebSearch: search failed', error);
+        searchResult = { textBits: [], links: [], images: [] };
     }
 
-    const { textBits, links, images } = await callSearchSource();
+    const { textBits, links, images } = searchResult;
     const budget = extension_settings.websearch.budget;
     let text = '';
 
@@ -1378,8 +585,6 @@ async function performSearchRequest(query, options = { useCache: true }) {
 
     return { text, links, images };
 }
-
-window['WebSearch_Intercept'] = onWebSearchPrompt;
 
 /**
  * Provides an interface for the Data Bank to interact with the extension.
@@ -1596,32 +801,30 @@ function registerFunctionTools() {
 }
 
 /**
- * Manages API key storage and UI updates for third-party services
- * @param {string} keyType - The SECRET_KEYS enum value
- * @param {string} serviceName - Display name of the service
+ * Manages API key storage and UI updates for the Serper service
  * @param {JQuery} buttonElement - jQuery button element reference
  */
-async function handleApiKeyManagement(keyType, serviceName, buttonElement) {
-    const key = await callGenericPopup(`Add a ${serviceName} key`, POPUP_TYPE.INPUT, '', {
+async function handleSerperKeyManagement(buttonElement) {
+    const key = await callGenericPopup('Add a Serper key', POPUP_TYPE.INPUT, '', {
         rows: 2,
         customButtons: [{
             text: 'Remove Key',
             appendAtEnd: true,
             result: POPUP_RESULT.NEGATIVE,
             action: async () => {
-                await writeSecret(keyType, '');
-                buttonElement.toggleClass('success', !!secret_state[keyType]);
+                await writeSecret(SECRET_KEYS.SERPER, '');
+                buttonElement.toggleClass('success', !!secret_state[SECRET_KEYS.SERPER]);
                 toastr.success('API Key removed');
             },
         }],
     });
 
     if (key) {
-        await writeSecret(keyType, String(key).trim());
+        await writeSecret(SECRET_KEYS.SERPER, String(key).trim());
         toastr.success('API Key saved');
     }
 
-    buttonElement.toggleClass('success', !!secret_state[keyType]);
+    buttonElement.toggleClass('success', !!secret_state[SECRET_KEYS.SERPER]);
 }
 
 
@@ -1636,59 +839,27 @@ jQuery(async () => {
         }
     }
 
+    // Force source to serper and function tool on
+    extension_settings.websearch.source = 'serper';
+    extension_settings.websearch.use_function_tool = true;
+
     const html = await renderExtensionTemplateAsync('third-party/Extension-WebSearch', 'settings');
-
-    function switchSourceSettings() {
-        $('#websearch_extras_settings').toggle(extension_settings.websearch.source === WEBSEARCH_SOURCES.EXTRAS || extension_settings.websearch.source === WEBSEARCH_SOURCES.PLUGIN);
-        $('#serpapi_settings').toggle(extension_settings.websearch.source === WEBSEARCH_SOURCES.SERPAPI);
-        $('#websearch_searxng_settings').toggle(extension_settings.websearch.source === WEBSEARCH_SOURCES.SEARXNG);
-        $('#websearch_tavily_settings').toggle(extension_settings.websearch.source === WEBSEARCH_SOURCES.TAVILY);
-        $('#websearch_koboldcpp_settings').toggle(extension_settings.websearch.source === WEBSEARCH_SOURCES.KOBOLDCPP);
-        $('#websearch_serper_settings').toggle(extension_settings.websearch.source === WEBSEARCH_SOURCES.SERPER);
-        $('#websearch_zai_settings').toggle(extension_settings.websearch.source === WEBSEARCH_SOURCES.ZAI);
-
-        $('#serpapi_key').toggleClass('success', !!secret_state[SECRET_KEYS.SERPAPI]);
-        $('#tavily_key').toggleClass('success', !!secret_state[SECRET_KEYS.TAVILY]);
-        $('#serper_key').toggleClass('success', !!secret_state[SECRET_KEYS.SERPER]);
-    }
 
     const getContainer = () => $(document.getElementById('websearch_container') ?? document.getElementById('extensions_settings2'));
     getContainer().append(html);
-    $('#websearch_source').val(extension_settings.websearch.source);
-    $('#websearch_source').on('change', () => {
-        extension_settings.websearch.source = String($('#websearch_source').find(':selected').val());
-        switchSourceSettings();
-        saveSettingsDebounced();
-    });
     $('#websearch_enabled').prop('checked', extension_settings.websearch.enabled);
     $('#websearch_enabled').on('change', () => {
         extension_settings.websearch.enabled = !!$('#websearch_enabled').prop('checked');
-        setExtensionPrompt(extensionPromptMarker, '', extension_settings.websearch.position, extension_settings.websearch.depth);
         registerFunctionTools();
         saveSettingsDebounced();
     });
-    $('#websearch_extras_engine').val(extension_settings.websearch.extras_engine);
-    $('#websearch_extras_engine').on('change', () => {
-        extension_settings.websearch.extras_engine = String($('#websearch_extras_engine').find(':selected').val());
-        saveSettingsDebounced();
-    });
-    $('#serpapi_key').on('click', async () => {
-        await handleApiKeyManagement(SECRET_KEYS.SERPAPI, 'SerpApi', $('#serpapi_key'));
-    });
-    $('#tavily_key').on('click', async () => {
-        await handleApiKeyManagement(SECRET_KEYS.TAVILY, 'Tavily', $('#tavily_key'));
-    });
     $('#serper_key').on('click', async () => {
-        await handleApiKeyManagement(SECRET_KEYS.SERPER, 'Serper', $('#serper_key'));
+        await handleSerperKeyManagement($('#serper_key'));
     });
+    $('#serper_key').toggleClass('success', !!secret_state[SECRET_KEYS.SERPER]);
     $('#websearch_budget').val(extension_settings.websearch.budget);
     $('#websearch_budget').on('input', () => {
         extension_settings.websearch.budget = Number($('#websearch_budget').val());
-        saveSettingsDebounced();
-    });
-    $('#websearch_trigger_phrases').val(extension_settings.websearch.triggerPhrases.join('\n'));
-    $('#websearch_trigger_phrases').on('input', () => {
-        extension_settings.websearch.triggerPhrases = String($('#websearch_trigger_phrases').val()).split('\n');
         saveSettingsDebounced();
     });
     $('#websearch_cache_lifetime').val(extension_settings.websearch.cacheLifetime);
@@ -1696,24 +867,9 @@ jQuery(async () => {
         extension_settings.websearch.cacheLifetime = Number($('#websearch_cache_lifetime').val());
         saveSettingsDebounced();
     });
-    $('#websearch_max_words').val(extension_settings.websearch.maxWords);
-    $('#websearch_max_words').on('input', () => {
-        extension_settings.websearch.maxWords = Number($('#websearch_max_words').val());
-        saveSettingsDebounced();
-    });
     $('#websearch_template').val(extension_settings.websearch.insertionTemplate);
     $('#websearch_template').on('input', () => {
         extension_settings.websearch.insertionTemplate = String($('#websearch_template').val());
-        saveSettingsDebounced();
-    });
-    $(`input[name="websearch_position"][value="${extension_settings.websearch.position}"]`).prop('checked', true);
-    $('input[name="websearch_position"]').on('change', () => {
-        extension_settings.websearch.position = Number($('input[name="websearch_position"]:checked').val());
-        saveSettingsDebounced();
-    });
-    $('#websearch_depth').val(extension_settings.websearch.depth);
-    $('#websearch_depth').on('input', () => {
-        extension_settings.websearch.depth = Number($('#websearch_depth').val());
         saveSettingsDebounced();
     });
     $('#websearch_visit_enabled').prop('checked', extension_settings.websearch.visit_enabled);
@@ -1746,51 +902,13 @@ jQuery(async () => {
         extension_settings.websearch.visit_block_header = String($('#websearch_block_header').val());
         saveSettingsDebounced();
     });
-    $('#websearch_use_backticks').prop('checked', extension_settings.websearch.use_backticks);
-    $('#websearch_use_backticks').on('change', () => {
-        extension_settings.websearch.use_backticks = !!$('#websearch_use_backticks').prop('checked');
-        saveSettingsDebounced();
-    });
-    $('#websearch_use_trigger_phrases').prop('checked', extension_settings.websearch.use_trigger_phrases);
-    $('#websearch_use_trigger_phrases').on('change', () => {
-        extension_settings.websearch.use_trigger_phrases = !!$('#websearch_use_trigger_phrases').prop('checked');
-        saveSettingsDebounced();
-    });
-    $('#websearch_use_regex').prop('checked', extension_settings.websearch.use_regex);
-    $('#websearch_use_regex').on('change', () => {
-        extension_settings.websearch.use_regex = !!$('#websearch_use_regex').prop('checked');
-        saveSettingsDebounced();
-    });
-
-    $('#websearch_regex_add').on('click', createRegexRule);
-    $('#websearch_searxng_url').val(extension_settings.websearch.searxng_url);
-    $('#websearch_searxng_url').on('input', () => {
-        extension_settings.websearch.searxng_url = String($('#websearch_searxng_url').val());
-        saveSettingsDebounced();
-    });
-
-    $('#websearch_searxng_preferences').val(extension_settings.websearch.searxng_preferences);
-    $('#websearch_searxng_preferences').on('input', () => {
-        extension_settings.websearch.searxng_preferences = String($('#websearch_searxng_preferences').val());
-        saveSettingsDebounced();
-    });
-
-    $('#websearch_use_function_tool').prop('checked', extension_settings.websearch.use_function_tool);
-    $('#websearch_use_function_tool').on('change', () => {
-        extension_settings.websearch.use_function_tool = !!$('#websearch_use_function_tool').prop('checked');
-        registerFunctionTools();
-        saveSettingsDebounced();
-    });
-
     $('#websearch_include_images').prop('checked', extension_settings.websearch.include_images);
     $('#websearch_include_images').on('change', () => {
         extension_settings.websearch.include_images = !!$('#websearch_include_images').prop('checked');
         saveSettingsDebounced();
     });
 
-    switchSourceSettings();
     registerFunctionTools();
-    await renderRegexRules();
 
     registerDebugFunction('clearWebSearchCache', 'Clear the WebSearch cache', 'Removes all search results stored in the local cache.', async () => {
         await storage.clear();
