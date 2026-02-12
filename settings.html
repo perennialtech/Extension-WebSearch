@@ -39,7 +39,7 @@
           >Prompt Budget <small>(text characters)</small></label
         >
         <input type="number" class="text_pole" id="websearch_budget" value="" />
-        <label for="websearch_template">Injection Template</label>
+        <label for="websearch_template">Insertion Template</label>
         <textarea
           id="websearch_template"
           class="text_pole textarea_compact autoSetHeight"
@@ -48,44 +48,9 @@
         ></textarea>
         <hr />
         <h4>Page Scraping</h4>
-        <label class="checkbox_label" for="websearch_visit_enabled">
-          <input type="checkbox" id="websearch_visit_enabled" />
-          <span>Visit Links</span>
-        </label>
         <label class="checkbox_label" for="websearch_include_images">
           <input type="checkbox" id="websearch_include_images" />
           <span>Include Images</span>
-        </label>
-        <div class="marginTopBot5">
-          Text will be extracted from the visited search result pages and saved
-          to:
-        </div>
-        <label for="websearch_visit_target_none" class="checkbox_label">
-          <input
-            id="websearch_visit_target_none"
-            type="radio"
-            name="websearch_visit_target"
-            value="2"
-          />
-          <span>None (just images)</span>
-        </label>
-        <label for="websearch_visit_target_message" class="checkbox_label">
-          <input
-            id="websearch_visit_target_message"
-            type="radio"
-            name="websearch_visit_target"
-            value="0"
-          />
-          <span>Message attachment</span>
-        </label>
-        <label for="websearch_visit_target_databank" class="checkbox_label">
-          <input
-            id="websearch_visit_target_databank"
-            type="radio"
-            name="websearch_visit_target"
-            value="1"
-          />
-          <span>Data Bank (chat)</span>
         </label>
         <label for="websearch_visit_count"
           >Visit Count <small>(max per query)</small></label
